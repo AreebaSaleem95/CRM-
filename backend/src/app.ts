@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import dealRoutes from './routes/dealRoutes';
 import taskRoutes from './routes/taskRoutes';
+import calendarRoutes from './routes/calendarRoutes';
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/deals', dealRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'success', message: 'Backend & DB running fine' });

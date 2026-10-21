@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { initialCalendarEvents } from '../data/mockData';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -8,66 +7,170 @@ import {
   Calendar as CalendarIcon, 
   Plus, 
   X,
-  Check
+  Trash2,
+  CalendarCheck
 } from 'lucide-react';
 
 export default function CalendarView() {
-  const monthsList = [
-    "September 2026", "October 2026", "November 2026", "December 2026"
-  ];
-  const [monthIndex, setMonthIndex] = useState(1); // 1 = October 2026
+  const [currentDate, setCurrentDate] = useState(new Date(2026, 9, 1)); // October 2026
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Events from LocalStorage
-  const [events, setEvents] = useState(() => {
-    const saved = localStorage.getItem('crm_calendar_events');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
-    }
-    return initialCalendarEvents;
-  });
-
-  // Real Book Meeting Modal State
+  // Modal States
   const [isMeetingModalOpen, setIsMeetingModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
+
   const [newMeeting, setNewMeeting] = useState({
     title: '',
     time: '11:00 AM - 12:00 PM',
     type: 'Client Call',
-    date: '2026-10-15'
+    date: '2026-10-21'
   });
 
-  const saveEvents = (updated) => {
-    setEvents(updated);
-    localStorage.setItem('crm_calendar_events', JSON.stringify(updated));
+  const getAuthHeaders = () => {
+    let token = localStorage.getItem('token') || localStorage.getItem('crm_token');
+    if (!token) {
+      try {
+        const storedUser = JSON.parse(localStorage.getItem('crm_current_user') || '{}');
+        token = storedUser.token;
+      } catch (e) {}
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    };
   };
 
+  const fetchEvents = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('http://localhost:5000/api/calendar', {
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.events)) {
+        setEvents(data.events);
+      }
+    } catch (err) {
+      console.error('Failed to fetch calendar events:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
   const handlePrevMonth = () => {
-    if (monthIndex > 0) setMonthIndex(monthIndex - 1);
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
   };
 
   const handleNextMonth = () => {
-    if (monthIndex < monthsList.length - 1) setMonthIndex(monthIndex + 1);
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
   };
 
-  const handleCreateMeeting = (e) => {
+  const currentYear = currentDate.getFullYear();
+  const currentMonth = currentDate.getMonth();
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  const monthHeaderLabel = `${monthNames[currentMonth]} ${currentYear}`;
+
+  const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
+  const startingDayIndex = (firstDayOfMonth + 6) % 7;
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const prevMonthTotalDays = new Date(currentYear, currentMonth, 0).getDate();
+
+  const prevMonthPaddedDays = Array.from(
+    { length: startingDayIndex },
+    (_, i) => prevMonthTotalDays - startingDayIndex + i + 1
+  );
+  const currentMonthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+  // Create Meeting
+  const handleCreateMeeting = async (e) => {
     e.preventDefault();
     if (!newMeeting.title) return;
 
-    const created = {
-      id: `ev-${Date.now()}`,
-      title: newMeeting.title,
-      time: newMeeting.time,
-      date: newMeeting.date,
-      type: newMeeting.type,
-      color: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-    };
+    try {
+      const res = await fetch('http://localhost:5000/api/calendar', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(newMeeting)
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchEvents();
+      }
+    } catch (err) {
+      console.error('Failed to book meeting:', err);
+    }
 
-    saveEvents([created, ...events]);
     setIsMeetingModalOpen(false);
-    setNewMeeting({ title: '', time: '11:00 AM - 12:00 PM', type: 'Client Call', date: '2026-10-15' });
+    setNewMeeting({
+      title: '',
+      time: '11:00 AM - 12:00 PM',
+      type: 'Client Call',
+      date: '2026-10-21'
+    });
+  };
+
+  // Open Edit/Move Modal
+  const handleOpenEdit = (eventItem) => {
+    setSelectedMeeting({ ...eventItem });
+    setIsEditModalOpen(true);
+  };
+
+  // Save Rescheduled / Moved Meeting
+  const handleSaveReschedule = async (e) => {
+    e.preventDefault();
+    if (!selectedMeeting) return;
+
+    // Optimistic UI update
+    setEvents(prev => prev.map(ev => ev.id === selectedMeeting.id ? selectedMeeting : ev));
+    setIsEditModalOpen(false);
+
+    try {
+      await fetch(`http://localhost:5000/api/calendar/${selectedMeeting.id}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          title: selectedMeeting.title,
+          date: selectedMeeting.date,
+          time: selectedMeeting.time,
+          type: selectedMeeting.type
+        })
+      });
+      await fetchEvents();
+    } catch (err) {
+      console.error('Failed to update event date:', err);
+      fetchEvents();
+    }
+  };
+
+  // Delete Meeting
+  const handleDeleteMeeting = async (id) => {
+    setEvents(prev => prev.filter(ev => ev.id !== id));
+    setIsEditModalOpen(false);
+
+    try {
+      await fetch(`http://localhost:5000/api/calendar/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      await fetchEvents();
+    } catch (err) {
+      console.error('Failed to delete event:', err);
+      fetchEvents();
+    }
   };
 
   const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const calendarDays = Array.from({ length: 31 }, (_, i) => i + 1);
 
   return (
     <div className="space-y-6">
@@ -78,36 +181,32 @@ export default function CalendarView() {
             Schedule & Activity Calendar
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Sales presentations, discovery calls, and contract reviews.
+            Click any scheduled meeting to move, reschedule, or cancel it.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Working Month Switcher */}
           <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl px-2 py-1">
             <button 
               onClick={handlePrevMonth}
-              disabled={monthIndex === 0}
-              className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded-lg hover:bg-slate-800 transition-colors"
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-xs font-bold text-slate-200 px-3 w-32 text-center">
-              {monthsList[monthIndex]}
+            <span className="text-xs font-bold text-slate-200 px-3 w-36 text-center select-none">
+              {monthHeaderLabel}
             </span>
             <button 
               onClick={handleNextMonth}
-              disabled={monthIndex === monthsList.length - 1}
-              className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded-lg hover:bg-slate-800 transition-colors"
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Functional Meeting Modal Button */}
           <button 
             onClick={() => setIsMeetingModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs transition-all shadow-md shadow-emerald-600/20"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Book Meeting</span>
@@ -126,14 +225,19 @@ export default function CalendarView() {
           </div>
 
           <div className="grid grid-cols-7 gap-2">
-            <div className="h-24 p-2 bg-slate-950/40 rounded-xl border border-slate-800/40 opacity-40 text-xs text-slate-600">28</div>
-            <div className="h-24 p-2 bg-slate-950/40 rounded-xl border border-slate-800/40 opacity-40 text-xs text-slate-600">29</div>
-            <div className="h-24 p-2 bg-slate-950/40 rounded-xl border border-slate-800/40 opacity-40 text-xs text-slate-600">30</div>
+            {prevMonthPaddedDays.map((padDay) => (
+              <div key={`pad-${padDay}`} className="h-24 p-2 bg-slate-950/40 rounded-xl border border-slate-800/40 opacity-30 text-xs text-slate-600">
+                {padDay}
+              </div>
+            ))}
 
-            {calendarDays.map((day) => {
-              const dateStr = `2026-10-${day < 10 ? '0' + day : day}`;
+            {currentMonthDays.map((day) => {
+              const formattedMonth = String(currentMonth + 1).padStart(2, '0');
+              const formattedDay = String(day).padStart(2, '0');
+              const dateStr = `${currentYear}-${formattedMonth}-${formattedDay}`;
+
               const dayEvents = events.filter(e => e.date === dateStr);
-              const isToday = day === 14;
+              const isToday = currentYear === 2026 && currentMonth === 9 && day === 21;
 
               return (
                 <div
@@ -149,7 +253,7 @@ export default function CalendarView() {
                       {day}
                     </span>
                     {isToday && (
-                      <span className="text-[9px] bg-emerald-500 text-white font-extrabold px-1.5 py-0.2 rounded-full">
+                      <span className="text-[9px] bg-emerald-500 text-white font-extrabold px-1.5 py-0.5 rounded-full">
                         Today
                       </span>
                     )}
@@ -159,8 +263,9 @@ export default function CalendarView() {
                     {dayEvents.map(ev => (
                       <div 
                         key={ev.id} 
-                        className={`text-[10px] p-1 rounded font-medium truncate border ${ev.color}`}
-                        title={ev.title}
+                        onClick={() => handleOpenEdit(ev)}
+                        className={`text-[10px] p-1 rounded font-medium truncate border cursor-pointer hover:scale-[1.02] transition-transform ${ev.color || 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'}`}
+                        title="Click to reschedule or delete"
                       >
                         {ev.title}
                       </div>
@@ -181,30 +286,48 @@ export default function CalendarView() {
             </h3>
 
             <div className="space-y-3">
-              {events.map((ev) => (
-                <div 
-                  key={ev.id} 
-                  className="p-3 bg-slate-950/90 border border-slate-800 rounded-xl space-y-1.5"
-                >
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${ev.color}`}>
-                    {ev.type}
-                  </span>
-                  <h4 className="text-xs font-bold text-slate-100">{ev.title}</h4>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <Clock className="w-3 h-3 text-slate-500" />
-                    <span>{ev.time}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    Date: {ev.date}
-                  </div>
+              {loading && events.length === 0 ? (
+                <div className="text-xs text-slate-500 py-6 text-center">Loading agenda...</div>
+              ) : events.length === 0 ? (
+                <div className="text-xs text-slate-500 py-6 text-center border border-dashed border-slate-800 rounded-xl">
+                  No upcoming meetings scheduled.
                 </div>
-              ))}
+              ) : (
+                events.map((ev) => (
+                  <div 
+                    key={ev.id} 
+                    onClick={() => handleOpenEdit(ev)}
+                    className="p-3 bg-slate-950/90 border border-slate-800 rounded-xl space-y-1.5 hover:border-emerald-500/50 transition-colors cursor-pointer group"
+                    title="Click to move/reschedule"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${ev.color || 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'}`}>
+                        {ev.type}
+                      </span>
+                      {ev.createdByName && (
+                        <span className="text-[10px] text-slate-400">{ev.createdByName}</span>
+                      )}
+                    </div>
+                    <h4 className="text-xs font-bold text-slate-100 group-hover:text-emerald-400 transition-colors">
+                      {ev.title}
+                    </h4>
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <Clock className="w-3 h-3 text-slate-500" />
+                      <span>{ev.time}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-800/60">
+                      <span>Date: {ev.date}</span>
+                      <span className="text-emerald-400 text-[10px] underline">Reschedule</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
       </div>
 
-{/* Book Meeting Modal */}
+      {/* Book Meeting Modal */}
       {isMeetingModalOpen && createPortal(
         <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6">
@@ -213,7 +336,7 @@ export default function CalendarView() {
               <button 
                 type="button" 
                 onClick={() => setIsMeetingModalOpen(false)} 
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -263,7 +386,7 @@ export default function CalendarView() {
                   type="text"
                   value={newMeeting.time}
                   onChange={(e) => setNewMeeting({ ...newMeeting, time: e.target.value })}
-                  placeholder="10:30 AM - 11:30 AM"
+                  placeholder="11:00 AM - 12:00 PM"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -272,16 +395,114 @@ export default function CalendarView() {
                 <button
                   type="button"
                   onClick={() => setIsMeetingModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md"
+                  className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md cursor-pointer"
                 >
                   Confirm Meeting
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Reschedule / Move / Cancel Meeting Modal */}
+      {isEditModalOpen && selectedMeeting && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <CalendarCheck className="w-5 h-5 text-emerald-400" />
+                Reschedule / Move Meeting
+              </h3>
+              <button 
+                type="button" 
+                onClick={() => setIsEditModalOpen(false)} 
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveReschedule} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">Meeting Title</label>
+                <input
+                  type="text"
+                  required
+                  value={selectedMeeting.title}
+                  onChange={(e) => setSelectedMeeting({ ...selectedMeeting, title: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">New Date (Move)</label>
+                  <input
+                    type="date"
+                    required
+                    value={selectedMeeting.date}
+                    onChange={(e) => setSelectedMeeting({ ...selectedMeeting, date: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-emerald-500/50 rounded-xl text-sm text-emerald-400 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">Type</label>
+                  <select
+                    value={selectedMeeting.type}
+                    onChange={(e) => setSelectedMeeting({ ...selectedMeeting, type: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="Client Call">Client Call</option>
+                    <option value="Internal Meeting">Internal Meeting</option>
+                    <option value="Presentation">Presentation</option>
+                    <option value="Closing">Closing</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">Time Slot</label>
+                <input
+                  type="text"
+                  value={selectedMeeting.time}
+                  onChange={(e) => setSelectedMeeting({ ...selectedMeeting, time: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteMeeting(selectedMeeting.id)}
+                  className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-600 rounded-xl transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Cancel / Delete</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="px-3 py-2 text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md cursor-pointer"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </div>
             </form>
           </div>
