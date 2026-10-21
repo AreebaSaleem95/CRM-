@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { initialTasks } from '../data/mockData';
+import React, { useState, useEffect } from 'react';
 import TaskFormModal from '../components/TaskFormModal';
 import { 
   CheckCircle2, 
@@ -9,32 +8,71 @@ import {
   User, 
   CheckSquare, 
   Trash2, 
-  Edit2
+  Edit2 
 } from 'lucide-react';
 
 export default function Tasks() {
- 
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem('crm_tasks_list');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
-    }
-    return initialTasks;
-  });
-
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [filterTab, setFilterTab] = useState('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
 
-
-  const saveAndSyncTasks = (newTasks) => {
-    setTasks(newTasks);
-    localStorage.setItem('crm_tasks_list', JSON.stringify(newTasks));
+  // Safely retrieve token from all common localStorage formats
+  const getAuthHeaders = () => {
+    let token = localStorage.getItem('token') || localStorage.getItem('crm_token');
+    if (!token) {
+      try {
+        const storedUser = JSON.parse(localStorage.getItem('crm_current_user') || '{}');
+        token = storedUser.token;
+      } catch (e) {}
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    };
   };
 
-  const toggleTaskStatus = (id) => {
-    const updated = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-    saveAndSyncTasks(updated);
+  // Fetch tasks from PostgreSQL backend
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('http://localhost:5000/api/tasks', {
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTasks(data.tasks || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tasks:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  // Toggle complete / pending status
+  const toggleTaskStatus = async (id) => {
+    const currentTask = tasks.find(t => t.id === id);
+    if (!currentTask) return;
+
+    const nextCompleted = !currentTask.completed;
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: nextCompleted } : t));
+
+    try {
+      await fetch(`http://localhost:5000/api/tasks/${id}/toggle`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ completed: nextCompleted })
+      });
+    } catch (err) {
+      console.error('Failed to update task status:', err);
+      fetchTasks();
+    }
   };
 
   const handleOpenAdd = () => {
@@ -47,24 +85,59 @@ export default function Tasks() {
     setIsModalOpen(true);
   };
 
-  const handleSaveTask = (savedData) => {
-    let updated;
-    if (editingTask) {
-      updated = tasks.map(t => t.id === editingTask.id ? { ...savedData, id: t.id } : t);
-    } else {
-      const newTask = {
-        ...savedData,
-        id: `task-${Date.now()}`,
-        completed: false
+  // Create or Update task with proper field normalization
+  const handleSaveTask = async (savedData) => {
+    try {
+      // Map all possible modal key names to match PostgreSQL schema & backend
+      const payload = {
+        title: savedData.title || savedData.taskDescription || savedData.description || 'New Task',
+        relatedDeal: savedData.relatedDeal || savedData.deal || savedData.client || '',
+        dueDate: savedData.dueDate || new Date().toISOString().split('T')[0],
+        priority: savedData.priority || 'Medium',
+        category: savedData.category || 'Follow-up'
       };
-      updated = [newTask, ...tasks];
+
+      if (editingTask) {
+        const res = await fetch(`http://localhost:5000/api/tasks/${editingTask.id}`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          await fetchTasks();
+        }
+      } else {
+        const res = await fetch('http://localhost:5000/api/tasks', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          await fetchTasks();
+        } else {
+          console.error('Task save backend error:', data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to save task:', err);
     }
-    saveAndSyncTasks(updated);
+    setIsModalOpen(false);
   };
 
-  const handleDeleteTask = (id) => {
-    const updated = tasks.filter(t => t.id !== id);
-    saveAndSyncTasks(updated);
+  // Delete task from DB
+  const handleDeleteTask = async (id) => {
+    setTasks(prev => prev.filter(t => t.id !== id));
+    try {
+      await fetch(`http://localhost:5000/api/tasks/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+    } catch (err) {
+      console.error('Failed to delete task:', err);
+      fetchTasks();
+    }
   };
 
   const filteredTasks = tasks.filter(t => {
@@ -89,7 +162,7 @@ export default function Tasks() {
 
         <button
           onClick={handleOpenAdd}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold shadow-lg shadow-emerald-600/25 transition-all text-sm self-start sm:self-auto"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold shadow-lg shadow-emerald-600/25 transition-all text-sm self-start sm:self-auto cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>Add New Task</span>
@@ -123,7 +196,7 @@ export default function Tasks() {
             <button
               key={tab}
               onClick={() => setFilterTab(tab)}
-              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 filterTab === tab
                   ? 'bg-emerald-600/15 text-emerald-400 border border-emerald-500/30'
                   : 'text-slate-400 hover:text-white hover:bg-slate-900'
@@ -140,7 +213,9 @@ export default function Tasks() {
       </div>
 
       <div className="space-y-3">
-        {filteredTasks.length === 0 ? (
+        {loading ? (
+          <div className="text-center py-12 text-slate-500 text-sm">Loading tasks from database...</div>
+        ) : filteredTasks.length === 0 ? (
           <div className="text-center py-12 border border-dashed border-slate-800 rounded-2xl text-slate-500 text-sm">
             No tasks found in this section.
           </div>
@@ -157,7 +232,7 @@ export default function Tasks() {
               <div className="flex items-start sm:items-center gap-3.5">
                 <button
                   onClick={() => toggleTaskStatus(task.id)}
-                  className="mt-0.5 sm:mt-0 text-slate-500 hover:text-emerald-400 transition-colors"
+                  className="mt-0.5 sm:mt-0 text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer"
                 >
                   {task.completed ? (
                     <CheckCircle2 className="w-5 h-5 text-emerald-400" />
@@ -200,13 +275,13 @@ export default function Tasks() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleOpenEdit(task)}
-                    className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                   >
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteTask(task.id)}
-                    className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import dealRoutes from './routes/dealRoutes';
+import taskRoutes from './routes/taskRoutes';
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/deals', dealRoutes);
+app.use('/api/tasks', taskRoutes);
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'success', message: 'Backend & DB running fine' });
