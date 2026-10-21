@@ -5,6 +5,7 @@ import authRoutes from './routes/authRoutes';
 import dealRoutes from './routes/dealRoutes';
 import taskRoutes from './routes/taskRoutes';
 import calendarRoutes from './routes/calendarRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 dotenv.config();
 
@@ -20,7 +21,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/deals', dealRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/calendar', calendarRoutes);
-
+app.use('/api/notifications', notificationRoutes);
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'success', message: 'Backend & DB running fine' });
 });

@@ -30,7 +30,6 @@ export default function Register() {
 
     try {
       setLoading(true);
-      // Real Backend API call to Node.js & PostgreSQL
       const response = await registerUser({
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
@@ -38,7 +37,7 @@ export default function Register() {
         confirmPassword,
       });
 
-      if (response.data.success) {
+      if (response.data?.success) {
         setIsSuccessModalOpen(true);
         setTimeout(() => {
           navigate('/login');
@@ -53,7 +52,7 @@ export default function Register() {
   };
 
   return (
-    <div className="w-full min-h-screen flex items-center justify-center p-4">
+    <div className="w-full min-h-screen flex items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl relative">
         <div className="text-center mb-7 relative">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/30 mx-auto mb-3">
@@ -129,7 +128,7 @@ export default function Register() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -193,15 +192,14 @@ export default function Register() {
           </Link>
         </p>
 
-        {/* Clean Branded Success Popup */}
+        
         {isSuccessModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl w-full max-w-sm p-6 text-center shadow-2xl shadow-emerald-950/60 animate-in fade-in zoom-in duration-200">
+            <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl w-full max-w-sm p-8 text-center shadow-2xl shadow-emerald-950/60 animate-in fade-in zoom-in duration-200">
               <div className="w-14 h-14 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/30">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h3 className="text-lg font-bold text-white mb-1">Account Created Successfully!</h3>
-              <p className="text-xs text-slate-400">Redirecting to login page...</p>
+              <h3 className="text-lg font-bold text-white">Account Created Successfully!</h3>
             </div>
           </div>
         )}

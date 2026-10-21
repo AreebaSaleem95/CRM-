@@ -92,6 +92,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 export const updateProfile = async (req: any, res: any) => {
   try {
     const userId = req.user.id;
@@ -114,6 +115,50 @@ export const updateProfile = async (req: any, res: any) => {
       user: updatedUser.rows[0],
     });
   } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const changePassword = async (req: any, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({ success: false, message: 'Current and new password are required' });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      res.status(400).json({ success: false, message: 'New password must be at least 8 characters' });
+      return;
+    }
+
+    // 1. Fetch current password hash from DB
+    const userResult = await pool.query('SELECT * FROM public.users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    const user = userResult.rows[0];
+
+    // 2. Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      res.status(400).json({ success: false, message: 'Current password is incorrect' });
+      return;
+    }
+
+    // 3. Hash new password & update
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    await pool.query('UPDATE public.users SET password = $1 WHERE id = $2', [hashedPassword, userId]);
+
+    res.status(200).json({ success: true, message: 'Password updated successfully in database!' });
+  } catch (error: any) {
+    console.error('changePassword error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };

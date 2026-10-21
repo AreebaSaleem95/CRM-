@@ -11,7 +11,8 @@ import {
   Camera,
   Eye,
   EyeOff,
-  Loader2
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { updateProfile } from '../services/api';
 
@@ -29,7 +30,7 @@ export default function Settings() {
     }
   }, [location.search]);
 
-  // Load the current active logged-in user from storage
+  // Load current active logged-in user from storage (UNTOUCHED)
   const [profileData, setProfileData] = useState(() => {
     const active = localStorage.getItem('crm_current_user');
     if (active) {
@@ -46,12 +47,16 @@ export default function Settings() {
     };
   });
 
+  // Security / Password State
   const [currentPassInput, setCurrentPassInput] = useState('');
   const [newPassInput, setNewPassInput] = useState('');
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
   const [passSuccessMsg, setPassSuccessMsg] = useState('');
+  const [passErrorMsg, setPassErrorMsg] = useState('');
+  const [passLoading, setPassLoading] = useState(false);
 
+  // Notifications State with auto-persistence
   const [notifications, setNotifications] = useState(() => {
     const saved = localStorage.getItem('crm_notifications_settings');
     if (saved) {
@@ -59,20 +64,23 @@ export default function Settings() {
     }
     return { newDeal: true, taskDue: true, whatsapp: true };
   });
+  const [notifSavedToast, setNotifSavedToast] = useState(false);
 
+  // CRM Preferences State with auto-persistence
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('crm_preferences_settings');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) {}
     }
-    return { currency: 'USD ($)', layout: 'Kanban Board (Default)' };
+    return { currency: 'PKR (Rs)', layout: 'Kanban Board (Default)' };
   });
+  const [prefSavedToast, setPrefSavedToast] = useState(false);
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Handle Profile Photo Upload with auto-compression (prevents payload quota errors)
+  // Handle Profile Photo Upload with auto-compression (UNTOUCHED)
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -115,7 +123,7 @@ export default function Settings() {
     reader.readAsDataURL(file);
   };
 
-  // Save changes permanently in PostgreSQL Database
+  // Save changes permanently in PostgreSQL Database (UNTOUCHED)
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     setErrorMessage('');
@@ -123,7 +131,6 @@ export default function Settings() {
     try {
       setLoading(true);
 
-      // 1. Send update to Backend & PostgreSQL Database
       const response = await updateProfile({
         name: profileData.name,
         role: profileData.role,
@@ -134,14 +141,13 @@ export default function Settings() {
       if (response.data.success) {
         const updatedUser = response.data.user;
 
-        // 2. Synchronize active session in localStorage
         localStorage.setItem('crm_current_user', JSON.stringify(updatedUser));
         setProfileData(updatedUser);
 
         setSavedSuccess(true);
         setTimeout(() => {
           setSavedSuccess(false);
-          window.location.reload(); // Refresh UI to apply updated avatar and role globally
+          window.location.reload();
         }, 800);
       }
     } catch (err) {
@@ -151,34 +157,70 @@ export default function Settings() {
     }
   };
 
-  // Update password
-  const handlePasswordUpdate = (e) => {
+  // Real Database Password Update
+  const handlePasswordUpdate = async (e) => {
     e.preventDefault();
+    setPassErrorMsg('');
+    setPassSuccessMsg('');
 
     if (newPassInput.length < 8) {
-      alert("New password kam az kam 8 characters ka hona chahiye.");
+      setPassErrorMsg("New password kam az kam 8 characters ka hona chahiye.");
       return;
     }
 
-    setPassSuccessMsg("Password update request processed!");
-    setCurrentPassInput('');
-    setNewPassInput('');
+    try {
+      setPassLoading(true);
+      let token = localStorage.getItem('token') || localStorage.getItem('crm_token');
+      if (!token) {
+        const storedUser = JSON.parse(localStorage.getItem('crm_current_user') || '{}');
+        token = storedUser.token;
+      }
 
-    setTimeout(() => {
-      setPassSuccessMsg('');
-    }, 3000);
+      const res = await fetch('http://localhost:5000/api/auth/change-password', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          currentPassword: currentPassInput,
+          newPassword: newPassInput
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setPassSuccessMsg("Password successfully updated in database!");
+        setCurrentPassInput('');
+        setNewPassInput('');
+        setTimeout(() => setPassSuccessMsg(''), 4000);
+      } else {
+        setPassErrorMsg(data.message || "Failed to update password");
+      }
+    } catch (err) {
+      setPassErrorMsg("Server connection error while updating password.");
+    } finally {
+      setPassLoading(false);
+    }
   };
 
+  // Toggle notification alerts & save
   const handleNotificationToggle = (key) => {
     const updated = { ...notifications, [key]: !notifications[key] };
     setNotifications(updated);
     localStorage.setItem('crm_notifications_settings', JSON.stringify(updated));
+    setNotifSavedToast(true);
+    setTimeout(() => setNotifSavedToast(false), 2000);
   };
 
+  // Save CRM preferences
   const handlePreferenceChange = (key, value) => {
     const updated = { ...preferences, [key]: value };
     setPreferences(updated);
     localStorage.setItem('crm_preferences_settings', JSON.stringify(updated));
+    setPrefSavedToast(true);
+    setTimeout(() => setPrefSavedToast(false), 2000);
   };
 
   const tabs = [
@@ -222,7 +264,7 @@ export default function Settings() {
 
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
         
-        {/* TAB 1: Profile & Account */}
+        {/* TAB 1: Profile & Account (100% UNTOUCHED) */}
         {activeTab === 'profile' && (
           <form onSubmit={handleSaveProfile} className="space-y-6">
             
@@ -368,7 +410,7 @@ export default function Settings() {
           </form>
         )}
 
-        {/* TAB 2: Security & Access */}
+        {/* TAB 2: Security & Access (Database Synced) */}
         {activeTab === 'security' && (
           <div className="space-y-5">
             <div>
@@ -385,6 +427,13 @@ export default function Settings() {
               <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl flex items-center gap-2 text-xs text-emerald-300 font-semibold">
                 <Check className="w-4 h-4" />
                 {passSuccessMsg}
+              </div>
+            )}
+
+            {passErrorMsg && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-2 text-xs text-rose-400 font-semibold">
+                <AlertCircle className="w-4 h-4" />
+                {passErrorMsg}
               </div>
             )}
 
@@ -405,7 +454,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={() => setShowCurrentPass(!showCurrentPass)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showCurrentPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -428,7 +477,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={() => setShowNewPass(!showNewPass)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showNewPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -437,20 +486,33 @@ export default function Settings() {
 
               <button
                 type="submit"
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs shadow-md transition-all cursor-pointer"
+                disabled={passLoading}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl font-semibold text-xs shadow-md transition-all cursor-pointer"
               >
-                Update Password
+                {passLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Update Password</span>
               </button>
             </form>
           </div>
         )}
 
-        {/* TAB 3: Notifications */}
+        {/* TAB 3: Notifications (Live State & Toast) */}
         {activeTab === 'notifications' && (
           <div className="space-y-4">
-            <h3 className="text-base font-bold text-white">Email & Messaging Alerts</h3>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white">Email & Messaging Alerts</h3>
+                <p className="text-xs text-slate-400">Manage real-time alerts dispatched to your mobile and inbox.</p>
+              </div>
+              {notifSavedToast && (
+                <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1 rounded-lg">
+                  <Check className="w-3.5 h-3.5" /> Saved
+                </span>
+              )}
+            </div>
+
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
                 <div>
                   <h4 className="text-xs font-bold text-slate-100">New Deal Assigned</h4>
                   <p className="text-[11px] text-slate-400">Notify when a lead is converted into a deal</p>
@@ -463,7 +525,7 @@ export default function Settings() {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
                 <div>
                   <h4 className="text-xs font-bold text-slate-100">Task Due Reminder</h4>
                   <p className="text-[11px] text-slate-400">Send daily morning agenda notification</p>
@@ -476,7 +538,7 @@ export default function Settings() {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
                 <div>
                   <h4 className="text-xs font-bold text-slate-100">WhatsApp Updates</h4>
                   <p className="text-[11px] text-slate-400">Receive instant lead status alerts on mobile</p>
@@ -492,10 +554,21 @@ export default function Settings() {
           </div>
         )}
 
-        {/* TAB 4: Preferences */}
+        {/* TAB 4: CRM Preferences (Live Currency & Layout) */}
         {activeTab === 'preferences' && (
           <div className="space-y-4">
-            <h3 className="text-base font-bold text-white">UI & Regional Preferences</h3>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white">UI & Regional Preferences</h3>
+                <p className="text-xs text-slate-400">Customize global display currency and pipeline presentation.</p>
+              </div>
+              {prefSavedToast && (
+                <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1 rounded-lg">
+                  <Check className="w-3.5 h-3.5" /> Preferences Applied
+                </span>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -504,7 +577,7 @@ export default function Settings() {
                 <select 
                   value={preferences.currency} 
                   onChange={(e) => handlePreferenceChange('currency', e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm cursor-pointer"
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm cursor-pointer focus:outline-none focus:border-emerald-500"
                 >
                   <option value="USD ($)">USD ($)</option>
                   <option value="PKR (Rs)">PKR (Rs)</option>
@@ -519,7 +592,7 @@ export default function Settings() {
                 <select 
                   value={preferences.layout} 
                   onChange={(e) => handlePreferenceChange('layout', e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm cursor-pointer"
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm cursor-pointer focus:outline-none focus:border-emerald-500"
                 >
                   <option value="Kanban Board (Default)">Kanban Board (Default)</option>
                   <option value="List / Spreadsheet View">List / Spreadsheet View</option>
