@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { pipelineStages } from '../data/mockData';
 import DealFormModal from '../components/DealFormModal';
-import { getDeals, createDeal, updateDeal, deleteDeal } from '../services/api';
+import AnalyticsCharts from '../components/AnalyticsCharts';
+import AIPitchModal from '../components/AIPitchModal';
+import { getDeals, createDeal, updateDeal, deleteDeal, generateAIDealPitch } from '../services/api';
 import { 
   Plus, 
   Search, 
@@ -16,7 +18,10 @@ import {
   Loader2,
   LayoutGrid,
   List,
-  AlertTriangle
+  AlertTriangle,
+  BarChart3,
+  Sparkles,
+  FileText
 } from 'lucide-react';
 
 export default function DealsPipeline() {
@@ -25,12 +30,21 @@ export default function DealsPipeline() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPriority, setFilterPriority] = useState('All');
   
+  // Charts Toggle State
+  const [showCharts, setShowCharts] = useState(false);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState(null);
 
   // Custom Delete Modal State
   const [dealToDelete, setDealToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // AI Strategist Modal State
+  const [selectedAIDeal, setSelectedAIDeal] = useState(null);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiData, setAiData] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   // Read Global CRM Preferences (Currency & Layout Mode)
   const [preferences, setPreferences] = useState(() => {
@@ -49,15 +63,41 @@ export default function DealsPipeline() {
     return '$';
   };
 
-  // Specific Deal Currency Symbol Helper
+  // Specific Deal Currency Symbol Helper (Always respects deal's own currency first)
   const formatDealValue = (deal) => {
     const cur = deal.currency || preferences.currency || 'USD';
     let sym = '$';
     if (cur.includes('PKR') || cur.includes('Rs')) sym = 'Rs. ';
     else if (cur.includes('EUR') || cur.includes('€')) sym = '€';
     else if (cur.includes('GBP') || cur.includes('£')) sym = '£';
+    else if (cur.includes('USD') || cur.includes('$')) sym = '$';
 
     return `${sym}${Number(deal.value || 0).toLocaleString()}`;
+  };
+
+  // File Type Detection Helpers
+  const isPdfFile = (url = '', name = '') => {
+    const target = `${url} ${name}`.toLowerCase();
+    return target.includes('.pdf');
+  };
+
+  const isWordFile = (url = '', name = '') => {
+    const target = `${url} ${name}`.toLowerCase();
+    return target.includes('.doc') || target.includes('.docx');
+  };
+
+  // Document Viewer URL Builder (Direct Browser Preview for Word & PDF)
+  const getDocumentViewUrl = (url = '', name = '') => {
+    if (!url) return '#';
+    const target = `${url} ${name}`.toLowerCase();
+    
+    // Agar Word file (.doc ya .docx) ho to Google Docs Viewer se direct browser view karein
+    if (target.includes('.doc') || target.includes('.docx')) {
+      return `https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`;
+    }
+    
+    
+    return url;
   };
 
   const globalCurrencySymbol = getGlobalCurrencySymbol();
@@ -120,7 +160,7 @@ export default function DealsPipeline() {
     setIsModalOpen(true);
   };
 
-  // Nayi Deal Add ya Purani Update (Database Sync)
+ 
   const handleSaveDeal = async (savedData) => {
     try {
       if (editingDeal) {
@@ -161,6 +201,32 @@ export default function DealsPipeline() {
     }
   };
 
+  // AI Pitch Generator Trigger
+  const handleOpenAIPitch = async (deal) => {
+    setSelectedAIDeal(deal);
+    setAiModalOpen(true);
+    setAiLoading(true);
+    setAiData(null);
+    try {
+      const res = await generateAIDealPitch({
+        title: deal.title,
+        company: deal.company,
+        value: deal.value,
+        currency: deal.currency || preferences.currency,
+        stage: deal.stage,
+        priority: deal.priority
+      });
+      if (res.data?.success) {
+        setAiData(res.data.data);
+      }
+    } catch (err) {
+      console.error('AI Generation Failed:', err);
+      alert('AI Pitch generate nahi ho saki. Apni GEMINI_API_KEY check karein.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // Move Stage (Database Sync)
   const handleMoveStage = async (dealId, nextStage) => {
     try {
@@ -195,34 +261,47 @@ export default function DealsPipeline() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Quick Layout Mode Selector */}
+        <div className="flex items-center gap-2.5">
+          {/* Analytics Charts Toggle Button (Only Icon) */}
+          <button
+            type="button"
+            onClick={() => setShowCharts(!showCharts)}
+            title={showCharts ? "Hide Analytics" : "Show Analytics"}
+            className={`p-2.5 rounded-xl transition-all cursor-pointer border ${
+              showCharts
+                ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-500/20'
+                : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+          </button>
+
+          {/* Quick Layout Mode Selector (Only Icons) */}
           <div className="flex items-center bg-slate-900 border border-slate-800 p-1 rounded-xl">
             <button
               onClick={() => handleToggleLayout('Kanban Board (Default)')}
-              className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`p-2 rounded-lg transition-all cursor-pointer ${
                 !isListView ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Kanban Board View"
             >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Kanban</span>
+              <LayoutGrid className="w-4 h-4" />
             </button>
             <button
               onClick={() => handleToggleLayout('List / Spreadsheet View')}
-              className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`p-2 rounded-lg transition-all cursor-pointer ${
                 isListView ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
               title="List / Spreadsheet View"
             >
-              <List className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Spreadsheet</span>
+              <List className="w-4 h-4" />
             </button>
           </div>
 
           <button
             onClick={handleOpenAddModal}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold shadow-lg shadow-emerald-600/25 transition-all text-sm shrink-0 cursor-pointer"
+            title="Add New Deal"
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold shadow-lg shadow-emerald-600/25 transition-all text-sm shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Add New Deal</span>
@@ -278,6 +357,11 @@ export default function DealsPipeline() {
           </div>
         </div>
       </div>
+
+      {/* Recharts Analytics Dashboard View */}
+      {showCharts && (
+        <AnalyticsCharts deals={deals} currencySymbol={globalCurrencySymbol} />
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/40 p-3 rounded-2xl border border-slate-800/80">
@@ -338,46 +422,82 @@ export default function DealsPipeline() {
                     </td>
                   </tr>
                 ) : (
-                  filteredDeals.map((deal) => (
-                    <tr key={deal.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="px-5 py-3.5 font-bold text-white flex items-center gap-2">
-                        <span>{deal.title}</span>
-                      </td>
-                      <td className="px-5 py-3.5 text-slate-400">{deal.company}</td>
-                      <td className="px-5 py-3.5">
-                        <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                          {deal.stage}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getPriorityBadge(deal.priority)}`}>
-                          {deal.priority}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 font-bold text-emerald-400">
-                        {formatDealValue(deal)}
-                      </td>
-                      <td className="px-5 py-3.5 text-xs text-slate-400">{deal.dueDate || 'N/A'}</td>
-                      <td className="px-5 py-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleOpenEditModal(deal)}
-                            className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title="Edit Deal"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleOpenDeleteConfirm(deal)}
-                            className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Deal"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                  filteredDeals.map((deal) => {
+                    const docUrl = deal.documentUrl || deal.document_url;
+                    const docName = deal.documentName || deal.document_name || '';
+                    const isPdf = isPdfFile(docUrl, docName);
+                    const isWord = isWordFile(docUrl, docName);
+
+                    return (
+                      <tr key={deal.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="px-5 py-3.5 font-bold text-white">
+                          <div className="flex items-center gap-2">
+                            <span>{deal.title}</span>
+                            {docUrl && (
+                              <a
+                                href={getDocumentViewUrl(docUrl, docName)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`Open attached ${isPdf ? 'PDF' : isWord ? 'Word' : 'Document'}`}
+                                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                                  isPdf
+                                    ? 'text-rose-400 bg-rose-500/10 hover:bg-rose-500/20'
+                                    : isWord
+                                    ? 'text-sky-400 bg-sky-500/10 hover:bg-sky-500/20'
+                                    : 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20'
+                                }`}
+                              >
+                                <FileText className="w-3 h-3 mr-1" />
+                                {isPdf ? 'PDF' : isWord ? 'DOC' : 'Doc'}
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 text-slate-400">{deal.company}</td>
+                        <td className="px-5 py-3.5">
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                            {deal.stage}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getPriorityBadge(deal.priority)}`}>
+                            {deal.priority}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 font-bold text-emerald-400">
+                          {formatDealValue(deal)}
+                        </td>
+                        <td className="px-5 py-3.5 text-xs text-slate-400">{deal.dueDate || 'N/A'}</td>
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* AI Sales Strategist Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAIPitch(deal)}
+                              className="p-1.5 text-amber-400 hover:text-amber-300 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                              title="AI Sales Strategist & Win Insights"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleOpenEditModal(deal)}
+                              className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                              title="Edit Deal"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleOpenDeleteConfirm(deal)}
+                              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Deal"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -418,81 +538,119 @@ export default function DealsPipeline() {
                       No deals in {stage.name}
                     </div>
                   ) : (
-                    stageDeals.map((deal) => (
-                      <div
-                        key={deal.id}
-                        className="group bg-slate-950/80 hover:bg-slate-800/60 border border-slate-800/80 hover:border-slate-700 rounded-xl p-4 transition-all duration-150 shadow-sm hover:shadow-md relative"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getPriorityBadge(deal.priority)}`}>
-                            {deal.priority}
-                          </span>
-                          
-                          <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => handleOpenEditModal(deal)}
-                              title="Edit Deal"
-                              className="p-1 text-slate-400 hover:text-emerald-400 rounded transition-colors cursor-pointer"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenDeleteConfirm(deal)}
-                              title="Delete Deal"
-                              className="p-1 text-slate-400 hover:text-rose-400 rounded transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
+                    stageDeals.map((deal) => {
+                      const docUrl = deal.documentUrl || deal.document_url;
+                      const docName = deal.documentName || deal.document_name || '';
+                      const isPdf = isPdfFile(docUrl, docName);
+                      const isWord = isWordFile(docUrl, docName);
 
-                        <h4 className="text-sm font-semibold text-slate-100 group-hover:text-white line-clamp-2">
-                          {deal.title}
-                        </h4>
-
-                        <div className="space-y-1 mt-2.5 text-xs text-slate-400">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="truncate">{deal.company}</span>
-                          </div>
-                          {deal.contactName && (
-                            <div className="flex items-center gap-1.5 truncate">
-                              <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                              <span className="truncate">{deal.contactName}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center justify-between pt-3 mt-3 border-t border-slate-800/80">
-                          <span className="text-sm font-bold text-emerald-400">
-                            {formatDealValue(deal)}
-                          </span>
-
-                          {deal.dueDate && (
-                            <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                              <Calendar className="w-3 h-3 text-slate-500" />
-                              <span>{deal.dueDate}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="mt-3 pt-2 flex items-center justify-between gap-1 border-t border-slate-900 text-[11px]">
-                          <span className="text-slate-500">Move to:</span>
-                          <div className="flex gap-1">
-                            {pipelineStages.filter(s => s.id !== deal.stage && s.name !== deal.stage).map(targetStage => (
+                      return (
+                        <div
+                          key={deal.id}
+                          className="group bg-slate-950/80 hover:bg-slate-800/60 border border-slate-800/80 hover:border-slate-700 rounded-xl p-4 transition-all duration-150 shadow-sm hover:shadow-md relative"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getPriorityBadge(deal.priority)}`}>
+                              {deal.priority}
+                            </span>
+                            
+                            <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                              {/* AI Sales Strategist Button */}
                               <button
-                                key={targetStage.id}
-                                onClick={() => handleMoveStage(deal.id, targetStage.id)}
-                                className="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 border border-slate-800 cursor-pointer"
-                                title={`Move to ${targetStage.name}`}
+                                type="button"
+                                onClick={() => handleOpenAIPitch(deal)}
+                                title="AI Sales Strategist & Win Insights"
+                                className="p-1 text-amber-400 hover:text-amber-300 hover:bg-slate-800 rounded transition-colors cursor-pointer"
                               >
-                                {targetStage.name.split(' ')[0]}
+                                <Sparkles className="w-3.5 h-3.5" />
                               </button>
-                            ))}
+                              <button
+                                onClick={() => handleOpenEditModal(deal)}
+                                title="Edit Deal"
+                                className="p-1 text-slate-400 hover:text-emerald-400 rounded transition-colors cursor-pointer"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenDeleteConfirm(deal)}
+                                title="Delete Deal"
+                                className="p-1 text-slate-400 hover:text-rose-400 rounded transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <h4 className="text-sm font-semibold text-slate-100 group-hover:text-white line-clamp-2">
+                            {deal.title}
+                          </h4>
+
+                          <div className="space-y-1 mt-2.5 text-xs text-slate-400">
+                            <div className="flex items-center gap-1.5 truncate">
+                              <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span className="truncate">{deal.company}</span>
+                            </div>
+                            {deal.contactName && (
+                              <div className="flex items-center gap-1.5 truncate">
+                                <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span className="truncate">{deal.contactName}</span>
+                              </div>
+                            )}
+                            {docUrl && (
+                              <div className="pt-0.5">
+                                <a
+                                  href={getDocumentViewUrl(docUrl, docName)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`View attached ${isPdf ? 'PDF' : isWord ? 'Word' : 'Document'}`}
+                                  className={`inline-flex items-center text-[11px] font-semibold hover:underline gap-1 ${
+                                    isPdf
+                                      ? 'text-rose-400'
+                                      : isWord
+                                      ? 'text-sky-400'
+                                      : 'text-emerald-400'
+                                  }`}
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  <span>
+                                    {isPdf ? 'PDF Document' : isWord ? 'DOC Document' : 'Attached Document'}
+                                  </span>
+                                </a>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between pt-3 mt-3 border-t border-slate-800/80">
+                            <span className="text-sm font-bold text-emerald-400">
+                              {formatDealValue(deal)}
+                            </span>
+
+                            {deal.dueDate && (
+                              <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                                <Calendar className="w-3 h-3 text-slate-500" />
+                                <span>{deal.dueDate}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-3 pt-2 flex items-center justify-between gap-1 border-t border-slate-900 text-[11px]">
+                            <span className="text-slate-500">Move to:</span>
+                            <div className="flex gap-1">
+                              {pipelineStages.filter(s => s.id !== deal.stage && s.name !== deal.stage).map(targetStage => (
+                                <button
+                                  key={targetStage.id}
+                                  onClick={() => handleMoveStage(deal.id, targetStage.id)}
+                                  className="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 border border-slate-800 cursor-pointer"
+                                  title={`Move to ${targetStage.name}`}
+                                >
+                                  {targetStage.name.split(' ')[0]}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -507,6 +665,15 @@ export default function DealsPipeline() {
         onClose={() => setIsModalOpen(false)}
         onSave={handleSaveDeal}
         initialData={editingDeal}
+      />
+
+      {/* AI Strategist Modal */}
+      <AIPitchModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        deal={selectedAIDeal}
+        aiData={aiData}
+        loading={aiLoading}
       />
 
       {/* Custom Dark Confirmation Modal for Deal Deletion */}

@@ -1,15 +1,19 @@
 import { Response } from 'express';
 import { pool } from '../config/db';
+import { triggerCrmWebhook } from '../services/webhookService';
 
+/**
+ * Fetch task records based on user authorization hierarchy (CEO/CFO/Manager see all, others see assigned)
+ */
 export const getTasks = async (req: any, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
-    const userRole = req.user.role;
+    const userRole = (req.user.role || '').toUpperCase();
 
     let query = '';
     let params: any[] = [];
 
-    if (userRole === 'CEO' || userRole === 'CFO' || userRole === 'Manager') {
+    if (userRole === 'CEO' || userRole === 'CFO' || userRole === 'MANAGER' || userRole === 'ADMIN') {
       query = `
         SELECT t.*, u.name as assigned_to_name 
         FROM tasks t
@@ -46,6 +50,9 @@ export const getTasks = async (req: any, res: Response): Promise<void> => {
   }
 };
 
+/**
+ * Create a new task record and trigger outbound task creation webhook
+ */
 export const createTask = async (req: any, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
@@ -60,6 +67,22 @@ export const createTask = async (req: any, res: Response): Promise<void> => {
     );
 
     const saved = result.rows[0];
+
+    // Trigger n8n automation webhook when a new task is created
+    triggerCrmWebhook(
+      'task.completed', // Standard payload hook for task events
+      {
+        taskId: saved.id,
+        title: saved.title,
+        relatedDeal: saved.related_deal,
+        dueDate: saved.due_date,
+        priority: saved.priority,
+        category: saved.category,
+        status: 'Pending',
+        assignedTo: req.user.name || 'Me'
+      },
+      req.user
+    );
 
     res.status(201).json({
       success: true,
@@ -79,6 +102,9 @@ export const createTask = async (req: any, res: Response): Promise<void> => {
   }
 };
 
+/**
+ * Update task details in PostgreSQL
+ */
 export const updateTask = async (req: any, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -119,6 +145,9 @@ export const updateTask = async (req: any, res: Response): Promise<void> => {
   }
 };
 
+/**
+ * Toggle task completion status and trigger completion webhook when marked as done
+ */
 export const toggleTaskStatus = async (req: any, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -135,12 +164,32 @@ export const toggleTaskStatus = async (req: any, res: Response): Promise<void> =
       return;
     }
 
-    res.status(200).json({ success: true, task: result.rows[0] });
+    const updatedTask = result.rows[0];
+
+    // Trigger n8n automation webhook when task is marked Completed
+    if (newStatus === 'Completed') {
+      triggerCrmWebhook(
+        'task.completed',
+        {
+          taskId: updatedTask.id,
+          title: updatedTask.title,
+          relatedDeal: updatedTask.related_deal,
+          completedAt: new Date().toISOString(),
+          status: 'Completed'
+        },
+        req.user
+      );
+    }
+
+    res.status(200).json({ success: true, task: updatedTask });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+/**
+ * Delete task record from database
+ */
 export const deleteTask = async (req: any, res: Response): Promise<void> => {
   try {
     const { id } = req.params;

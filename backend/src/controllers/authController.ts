@@ -72,7 +72,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET || 'supersecretcrmtokenkey123',
-      { expiresIn: '1d' }
+      { expiresIn: '30d' }
     );
 
     res.status(200).json({
