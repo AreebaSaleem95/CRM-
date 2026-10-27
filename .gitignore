@@ -1,0 +1,16 @@
+# Dependencies aur build output
+node_modules/
+dist/
+build/
+
+# Secrets: kabhi commit nahi hone chahiye
+.env
+.env.*
+!.env.example
+
+# Logs aur OS ki files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
