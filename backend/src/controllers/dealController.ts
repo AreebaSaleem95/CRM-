@@ -1,7 +1,8 @@
 import { Response } from 'express';
 import { pool } from '../config/db';
+import { triggerCrmWebhook } from '../services/webhookService';
 
-// 0. Get all sales agents / team members for CEO / Manager assignment dropdown
+// 0. Fetch all sales representatives for assignment dropdown
 export const getSalesAgents = async (req: any, res: Response): Promise<void> => {
   try {
     const result = await pool.query(
@@ -13,14 +14,13 @@ export const getSalesAgents = async (req: any, res: Response): Promise<void> => 
   }
 };
 
-// 1. Get deals (CEO/Admin sees all company deals, Sales Agent sees assigned deals)
+// 1. Fetch deals pipeline data based on user authorization hierarchy
 export const getDeals = async (req: any, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
     const userRole = (req.user.role || '').toLowerCase();
-
     const isExecutive = userRole === 'admin' || userRole === 'ceo' || userRole === 'cfo';
-    
+
     let query = 'SELECT * FROM deals WHERE user_id = $1 ORDER BY id DESC';
     let params: any[] = [userId];
 
@@ -37,10 +37,13 @@ export const getDeals = async (req: any, res: Response): Promise<void> => {
       company: row.company,
       contactName: row.contact_person || '',
       value: Number(row.value) || 0,
+      currency: row.currency || 'USD',
       stage: row.stage || 'Lead In',
       priority: row.priority || 'Medium',
       dueDate: row.closing_date || '',
       assignedTo: row.user_id,
+      documentUrl: row.document_url || '',
+      documentName: row.document_name || '',
     }));
 
     res.status(200).json({ success: true, deals: formattedDeals });
@@ -49,43 +52,71 @@ export const getDeals = async (req: any, res: Response): Promise<void> => {
   }
 };
 
-// 2. Create new deal & automatically dispatch notification to assigned agent
+// 2. Create new deal, dispatch in-app notification and trigger automation if won
 export const createDeal = async (req: any, res: Response): Promise<void> => {
   try {
     const creatorUserId = req.user.id;
     const creatorName = req.user.name || 'Management';
 
-    const { 
-      title, 
-      company, 
-      contactName, 
-      contact_person, 
-      value, 
-      stage, 
-      priority, 
-      dueDate, 
+    const {
+      title,
+      company,
+      contactName,
+      contact_person,
+      value,
+      currency,
+      stage,
+      priority,
+      dueDate,
       closing_date,
       assigned_to,
-      assignedTo
+      assignedTo,
+      documentUrl,
+      documentName,
+      document_url,
+      document_name,
     } = req.body;
 
     const person = contactName || contact_person || '';
     const date = dueDate || closing_date || '';
-    
- 
+    const dealCurrency = currency || 'USD';
+    const docUrl = documentUrl || document_url || null;
+    const docName = documentName || document_name || null;
     const targetUserId = assigned_to || assignedTo || creatorUserId;
 
-    // 1. Insert Deal into database
+    // Insert new deal record into PostgreSQL database
     const result = await pool.query(
-      `INSERT INTO deals (user_id, title, company, contact_person, value, stage, priority, closing_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO deals (user_id, title, company, contact_person, value, currency, stage, priority, closing_date, document_url, document_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [targetUserId, title, company, person, value || 0, stage || 'Lead In', priority || 'Medium', date]
+      [targetUserId, title, company, person, value || 0, dealCurrency, stage || 'Lead In', priority || 'Medium', date, docUrl, docName]
     );
 
     const saved = result.rows[0];
 
-    // 2. Insert In-App Notification into PostgreSQL table
+    // Trigger n8n webhook automation if deal is created directly in Won stage
+    const isWon = saved.stage?.toLowerCase() === 'won' || saved.stage?.toLowerCase() === 'won / closed';
+    if (isWon) {
+      triggerCrmWebhook(
+        'deal.won',
+        {
+          dealId: saved.id,
+          title: saved.title,
+          company: saved.company,
+          contactPerson: saved.contact_person,
+          value: Number(saved.value) || 0,
+          currency: saved.currency,
+          stage: saved.stage,
+          priority: saved.priority,
+          closingDate: saved.closing_date,
+          documentUrl: saved.document_url,
+          documentName: saved.document_name,
+        },
+        req.user
+      );
+    }
+
+    // Persist in-app assignment notification into PostgreSQL
     try {
       await pool.query(
         `INSERT INTO notifications (user_id, channel, title, description, link, is_read, created_at)
@@ -95,7 +126,7 @@ export const createDeal = async (req: any, res: Response): Promise<void> => {
           'deal',
           'New Deal Assigned',
           `Deal "${title}" at ${company || 'Client'} has been assigned to you by ${creatorName}.`,
-          '/deals'
+          '/deals',
         ]
       );
     } catch (notifErr) {
@@ -110,10 +141,13 @@ export const createDeal = async (req: any, res: Response): Promise<void> => {
         company: saved.company,
         contactName: saved.contact_person || '',
         value: Number(saved.value) || 0,
+        currency: saved.currency || 'USD',
         stage: saved.stage,
         priority: saved.priority,
         dueDate: saved.closing_date || '',
         assignedTo: saved.user_id,
+        documentUrl: saved.document_url || '',
+        documentName: saved.document_name || '',
       },
     });
   } catch (error: any) {
@@ -121,7 +155,7 @@ export const createDeal = async (req: any, res: Response): Promise<void> => {
   }
 };
 
-// 3. Update deal
+// 3. Update existing deal and dispatch n8n automation webhook when transitioned to Won
 export const updateDeal = async (req: any, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
@@ -129,13 +163,30 @@ export const updateDeal = async (req: any, res: Response): Promise<void> => {
     const isExecutive = userRole === 'admin' || userRole === 'ceo' || userRole === 'cfo';
 
     const { id } = req.params;
-    const { title, company, contactName, contact_person, value, stage, priority, dueDate, closing_date } = req.body;
+    const {
+      title,
+      company,
+      contactName,
+      contact_person,
+      value,
+      currency,
+      stage,
+      priority,
+      dueDate,
+      closing_date,
+      documentUrl,
+      documentName,
+      document_url,
+      document_name,
+    } = req.body;
 
     const person = contactName !== undefined ? contactName : contact_person;
     const date = dueDate !== undefined ? dueDate : closing_date;
+    const docUrl = documentUrl !== undefined ? documentUrl : document_url;
+    const docName = documentName !== undefined ? documentName : document_name;
 
-    const condition = isExecutive ? 'WHERE id = $8' : 'WHERE id = $8 AND user_id = $9';
-    const params = [title, company, person, value, stage, priority, date, id];
+    const condition = isExecutive ? 'WHERE id = $11' : 'WHERE id = $11 AND user_id = $12';
+    const params: any[] = [title, company, person, value, currency, stage, priority, date, docUrl, docName, id];
     if (!isExecutive) params.push(userId);
 
     const result = await pool.query(
@@ -144,20 +195,46 @@ export const updateDeal = async (req: any, res: Response): Promise<void> => {
            company = COALESCE($2, company),
            contact_person = COALESCE($3, contact_person),
            value = COALESCE($4, value),
-           stage = COALESCE($5, stage),
-           priority = COALESCE($6, priority),
-           closing_date = COALESCE($7, closing_date)
+           currency = COALESCE($5, currency),
+           stage = COALESCE($6, stage),
+           priority = COALESCE($7, priority),
+           closing_date = COALESCE($8, closing_date),
+           document_url = COALESCE($9, document_url),
+           document_name = COALESCE($10, document_name)
        ${condition}
        RETURNING *`,
       params
     );
 
     if (result.rows.length === 0) {
-      res.status(404).json({ success: false, message: 'Deal nahi mili' });
+      res.status(404).json({ success: false, message: 'Deal not found' });
       return;
     }
 
     const updated = result.rows[0];
+
+    // Trigger n8n webhook automation when deal transitions into Won stage
+    const isWon = stage && (stage.toLowerCase() === 'won' || stage.toLowerCase() === 'won / closed');
+    if (isWon) {
+      triggerCrmWebhook(
+        'deal.won',
+        {
+          dealId: updated.id,
+          title: updated.title,
+          company: updated.company,
+          contactPerson: updated.contact_person,
+          value: Number(updated.value) || 0,
+          currency: updated.currency,
+          stage: updated.stage,
+          priority: updated.priority,
+          closingDate: updated.closing_date,
+          documentUrl: updated.document_url,
+          documentName: updated.document_name,
+        },
+        req.user
+      );
+    }
+
     res.status(200).json({
       success: true,
       deal: {
@@ -166,10 +243,13 @@ export const updateDeal = async (req: any, res: Response): Promise<void> => {
         company: updated.company,
         contactName: updated.contact_person || '',
         value: Number(updated.value) || 0,
+        currency: updated.currency || 'USD',
         stage: updated.stage,
         priority: updated.priority,
         dueDate: updated.closing_date || '',
         assignedTo: updated.user_id,
+        documentUrl: updated.document_url || '',
+        documentName: updated.document_name || '',
       },
     });
   } catch (error: any) {
@@ -177,7 +257,7 @@ export const updateDeal = async (req: any, res: Response): Promise<void> => {
   }
 };
 
-// 4. Delete deal
+// 4. Delete deal record from PostgreSQL
 export const deleteDeal = async (req: any, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
@@ -194,7 +274,7 @@ export const deleteDeal = async (req: any, res: Response): Promise<void> => {
     );
 
     if (result.rows.length === 0) {
-      res.status(404).json({ success: false, message: 'Deal delete nahi ho saki' });
+      res.status(404).json({ success: false, message: 'Deal could not be deleted' });
       return;
     }
 

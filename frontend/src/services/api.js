@@ -30,5 +30,17 @@ export const markNotificationsAsRead = (notificationId) => API.put('/notificatio
 export const fetchUserSettings = () => API.get('/notifications/settings');
 export const saveUserSettings = (settings) => API.put('/notifications/settings', settings);
 export const fetchSalesAgents = () => API.get('/deals/agents');
+// AI Deal Pitch & Insights API call
+export const generateAIDealPitch = (dealData) => {
+  return API.post('/ai/deal-pitch', dealData);
+};
+// Cloudinary Document & Contract Upload Endpoint
+export const uploadDealDocument = (formData) => {
+  return API.post('/upload/document', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+};
 
 export default API;
