@@ -19,7 +19,11 @@ export function AuthProvider({ children }) {
       }
       try {
         const me = await authService.getMe();
-        if (active) setUser(me);
+        if (active) {
+          const cached = localStorage.getItem("crm_current_user");
+          const extra = cached ? JSON.parse(cached) : {};
+          setUser({ ...me, ...extra });
+        }
       } catch {
         tokenStore.clear();
       } finally {
@@ -36,18 +40,32 @@ export function AuthProvider({ children }) {
     const data = await authService.login(credentials);
     tokenStore.set(data.accessToken, data.refreshToken);
     setUser(data.user);
+    localStorage.setItem("crm_current_user", JSON.stringify(data.user));
     return data.user;
   }, []);
 
   const logout = useCallback(async () => {
-    await authService.logout();
+    try {
+      await authService.logout();
+    } catch (e) {}
     tokenStore.clear();
+    localStorage.removeItem("crm_current_user");
+    localStorage.removeItem("user");
     setUser(null);
     queryClient.clear();
   }, [queryClient]);
 
+  // Real-time local & global user updater
+  const updateUser = useCallback((updatedData) => {
+    setUser((prev) => {
+      const merged = { ...prev, ...updatedData };
+      localStorage.setItem("crm_current_user", JSON.stringify(merged));
+      return merged;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

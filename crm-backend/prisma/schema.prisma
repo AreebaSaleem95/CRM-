@@ -17,12 +17,18 @@ model User {
   id            Int            @id @default(autoincrement())
   name          String
   email         String         @unique
-  passwordHash  String
-  role          Role           @default(sales)
-  createdAt     DateTime       @default(now())
+  passwordHash  String         @map("password")
+  role          String?        @default("sales")
+  company       String?
+  avatar        String?
+  createdAt     DateTime       @default(now()) @map("created_at")
   leads         Lead[]
   refreshTokens RefreshToken[]
   activities    Activity[]
+  deals         Deal[]
+  tasks         Task[]
+
+  @@map("users")
 }
 
 model RefreshToken {
@@ -32,6 +38,8 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
 }
 
 model Lead {
@@ -50,6 +58,7 @@ model Lead {
 
   @@index([status])
   @@index([createdAt])
+  @@map("leads")
 }
 
 model Contact {
@@ -62,6 +71,8 @@ model Contact {
   city      String
   avatarUrl String?
   createdAt DateTime @default(now())
+
+  @@map("contacts")
 }
 
 model Activity {
@@ -70,4 +81,36 @@ model Activity {
   userId    Int?
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
+
+  @@map("activities")
+}
+
+model Deal {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  company     String
+  stage       String    @default("lead")
+  priority    String    @default("medium")
+  value       Float     @default(0)
+  currency    String?   @default("PKR")
+  dueDate     DateTime? @map("due_date")
+  documentUrl String?   @map("document_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("deals")
+}
+
+model Task {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  status    String    @default("pending")
+  priority  String    @default("medium")
+  dueDate   DateTime? @map("due_date")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("tasks")
 }

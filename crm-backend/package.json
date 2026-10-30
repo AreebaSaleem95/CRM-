@@ -23,6 +23,7 @@
   "dependencies": {
     "@google/genai": "^2.31.0",
     "@prisma/client": "^6.19.3",
+    "@types/pg": "^8.23.1",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.11.0",
     "cors": "^2.8.6",
@@ -32,6 +33,7 @@
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.12.1",
     "multer": "^2.5.0",
+    "pg": "^8.23.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
